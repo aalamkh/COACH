@@ -4,6 +4,13 @@ export function isBillingError(error: string): boolean {
     m.includes("credit balance") ||
     m.includes("billing") ||
     m.includes("insufficient") ||
-    m.includes("quota")
+    m.includes("quota") ||
+    m.includes("unavailable") ||
+    m.includes("high demand") ||
+    m.includes("overloaded") ||
+    m.includes("503") ||
+    m.includes("429") ||
+    m.includes("malformed json") ||
+    m.includes("empty response")
   );
 }

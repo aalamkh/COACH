@@ -31,16 +31,7 @@ export function StatusLineAutoGenerator() {
     if (isBillingError(error)) {
       return (
         <p className="text-sm text-muted-foreground">
-          AI features paused — getting rate-limited. Wait a minute and refresh, or grab a fresh Gemini key at{" "}
-          <a
-            href="https://aistudio.google.com/apikey"
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary hover:underline"
-          >
-            aistudio.google.com/apikey
-          </a>
-          .
+          Gemini is rate-limited or overloaded — refresh in a minute to retry.
         </p>
       );
     }
