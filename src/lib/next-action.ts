@@ -1,10 +1,9 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { notes, submissions, tasks, type Task } from "@/db/schema";
-import { MissingApiKeyError } from "./anthropic";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateText, MissingApiKeyError } from "./gemini";
+import { readSettings } from "./env";
 
 export interface NextActionResult {
   text: string;
@@ -59,34 +58,13 @@ ${task.successCriteriaMd}
 ${submissionsBlock}
 ${noteBlock}`;
 
-  // Defaults to Haiku for this surface — designed to be cheap and used often.
-  // Override via /settings → Coaching → Next-action model.
-  const model = MODEL_IDS[nextActionModel];
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model,
-    max_tokens: 150,
+  const result = await generateText({
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: userMsg,
+    model: nextActionModel,
     temperature: 0.3,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    messages: [{ role: "user", content: userMsg }],
+    maxOutputTokens: 250,
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Anthropic response missing text block.");
-  }
-
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
-
-  return { text: textBlock.text.trim(), tokenCost, model };
+  return { text: result.text.trim(), tokenCost: result.tokenCost, model: result.model };
 }

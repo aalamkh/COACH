@@ -48,22 +48,30 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="mb-4 text-xs text-muted-foreground">
-            Writes to <code className="rounded bg-muted px-1 py-0.5">.env.local</code>. Values are
-            read at runtime, so changes take effect on the next API call without a restart.
+            Settings are stored in the database. Values are read at runtime, so changes take effect
+            on the next API call without a restart.
           </p>
           <form action={saveSettings} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="apiKey">Anthropic API key</Label>
+              <Label htmlFor="apiKey">Gemini API key</Label>
               <Input
                 id="apiKey"
                 name="apiKey"
                 type="password"
                 autoComplete="off"
-                placeholder={apiKey ? `set · ${maskedKey(apiKey)}` : "sk-ant-…"}
+                placeholder={apiKey ? `set · ${maskedKey(apiKey)}` : "AIza…"}
               />
               <p className="text-xs text-muted-foreground">
-                Leave blank to keep the current value. Stored in{" "}
-                <code className="rounded bg-muted px-1 py-0.5 text-[11px]">ANTHROPIC_API_KEY</code>.
+                Leave blank to keep the current value. Grab a free key at{" "}
+                <a
+                  href="https://aistudio.google.com/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  aistudio.google.com/apikey
+                </a>
+                .
               </p>
             </div>
 

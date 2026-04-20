@@ -25,7 +25,7 @@ function Filled({ row }: { row: StatusLine }) {
 function NoKey() {
   return (
     <p className="text-sm text-muted-foreground">
-      Add an Anthropic key in{" "}
+      Add a Gemini API key in{" "}
       <Link href="/settings" className="text-primary hover:underline">
         /settings
       </Link>{" "}

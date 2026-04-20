@@ -1,8 +1,7 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { MissingApiKeyError } from "./anthropic";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateJson, MissingApiKeyError, Type } from "./gemini";
+import { readSettings } from "./env";
 import type { Task } from "@/db/schema";
 
 export const lessonJsonSchema = z.object({
@@ -37,45 +36,13 @@ concepts_md — exactly 3 markdown h3 sections. The format for each section is:
 
 worked_example_md — one code example, 15-40 lines max. Every non-obvious line has a // ← inline comment in everyday English. Before the code block, one sentence describing what the code does in plain language ('This is how the app checks whether the person logging in is who they say they are.'). After the code block, one sentence naming what the developer should notice or imitate ('Notice that we never trust the user's input — we always look them up fresh from the database.').
 
-diagram_mermaid — include a mermaid diagram if the concept has a flow, a structure, or a sequence. Skip if the concept is purely code-level. Label nodes in plain language, not technical shorthand.
+diagram_mermaid — include a mermaid diagram if the concept has a flow, a structure, or a sequence. Set to null if the concept is purely code-level. Label nodes in plain language, not technical shorthand.
 
 questions — 2 multiple-choice questions. Each question tests understanding via a scenario, not definitions. Bad question: 'What is a webhook?' Good question: 'Your app needs to know when a user cancels their Stripe subscription. Which approach fits best?' Each option should be plausible-sounding — no obvious wrong answers. explanation_md for each: one sentence on why the right answer is right, one sentence on the most common wrong answer and why it's tempting but wrong.
 
 Hard rules. No 'great question.' No 'as you can see.' No 'simply.' No 'just.' No 'it's important to understand that.' No filler. If a sentence could be deleted without losing meaning, delete it before returning. Target reading level: a smart 16-year-old who has never coded for a paycheck. Length target for full lesson: 500-900 words of prose total across concepts_md and the prose parts of worked_example_md.`;
 
-const TOOL = {
-  name: "submit_lesson",
-  description: "Return the lesson payload as structured JSON.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      concepts_md: { type: "string" },
-      worked_example_md: { type: "string" },
-      diagram_mermaid: { type: ["string", "null"] },
-      questions: {
-        type: "array",
-        minItems: 2,
-        maxItems: 2,
-        items: {
-          type: "object",
-          properties: {
-            question: { type: "string" },
-            options: {
-              type: "array",
-              items: { type: "string" },
-              minItems: 3,
-              maxItems: 3,
-            },
-            correct_index: { type: "integer", minimum: 0, maximum: 2 },
-            explanation_md: { type: "string" },
-          },
-          required: ["question", "options", "correct_index", "explanation_md"],
-        },
-      },
-    },
-    required: ["concepts_md", "worked_example_md", "diagram_mermaid", "questions"],
-  },
-};
+export const SIMPLER_INSTRUCTION = `The developer read the previous lesson and wants it even simpler, with a different real-world analogy. Pick a different analogy from before and go one step more concrete. Shorter, not longer.`;
 
 function userMessage(task: Task) {
   return `Task title: ${task.title}
@@ -89,8 +56,6 @@ ${task.successCriteriaMd}
 Submission type: ${task.submissionType}`;
 }
 
-export const SIMPLER_INSTRUCTION = `The developer read the previous lesson and wants it even simpler, with a different real-world analogy. Pick a different analogy from before and go one step more concrete. Shorter, not longer.`;
-
 export async function generateLesson(
   task: Task,
   extraInstruction?: string,
@@ -98,40 +63,43 @@ export async function generateLesson(
   const { apiKey, lessonModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const client = new Anthropic({ apiKey });
   const systemText = extraInstruction
     ? `${SYSTEM_PROMPT}\n\n${extraInstruction}`
     : SYSTEM_PROMPT;
 
-  const response = await client.messages.create({
-    model: MODEL_IDS[lessonModel],
-    max_tokens: 4000,
+  const result = await generateJson({
+    systemPrompt: systemText,
+    userPrompt: userMessage(task),
+    model: lessonModel,
     temperature: 0.4,
-    system: [
-      {
-        type: "text",
-        text: systemText,
-        // Only cache the canonical prompt; the simpler-variant has its own
-        // cache miss but the savings still apply across plain regens.
-        ...(extraInstruction ? {} : { cache_control: { type: "ephemeral" as const } }),
+    maxOutputTokens: 6000,
+    schema: {
+      type: Type.OBJECT,
+      properties: {
+        concepts_md: { type: Type.STRING },
+        worked_example_md: { type: Type.STRING },
+        diagram_mermaid: { type: Type.STRING, nullable: true },
+        questions: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              question: { type: Type.STRING },
+              options: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              correct_index: { type: Type.INTEGER },
+              explanation_md: { type: Type.STRING },
+            },
+            required: ["question", "options", "correct_index", "explanation_md"],
+          },
+        },
       },
-    ],
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: TOOL.name },
-    messages: [{ role: "user", content: userMessage(task) }],
+      required: ["concepts_md", "worked_example_md", "diagram_mermaid", "questions"],
+    },
+    zodSchema: lessonJsonSchema,
   });
 
-  const toolUse = response.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Anthropic response missing tool_use block.");
-  }
-
-  const parsed = lessonJsonSchema.parse(toolUse.input);
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
-
-  return { ...parsed, tokenCost, model: MODEL_IDS[lessonModel] };
+  return { ...result.data, tokenCost: result.tokenCost, model: result.model };
 }

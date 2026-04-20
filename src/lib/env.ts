@@ -5,9 +5,9 @@ import { db } from "@/db/client";
 import { settings, type SettingsRow } from "@/db/schema";
 
 export const MODEL_IDS = {
-  opus: "claude-opus-4-7",
-  sonnet: "claude-sonnet-4-6",
-  haiku: "claude-haiku-4-5-20251001",
+  opus: "gemini-2.5-flash",
+  sonnet: "gemini-2.5-flash",
+  haiku: "gemini-2.5-flash-lite",
 } as const;
 
 export const modelSchema = z.enum(["opus", "sonnet", "haiku"]);
@@ -64,7 +64,11 @@ async function loadSettingsRow(): Promise<SettingsRow | null> {
 export async function readSettings(): Promise<Settings> {
   const row = await loadSettingsRow();
 
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? row?.anthropicApiKey ?? "";
+  const apiKey =
+    process.env.GEMINI_API_KEY ??
+    process.env.ANTHROPIC_API_KEY ??
+    row?.anthropicApiKey ??
+    "";
   const githubUsername =
     process.env.GITHUB_USERNAME ?? row?.githubUsername ?? "aalamkh";
 

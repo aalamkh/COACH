@@ -33,7 +33,7 @@ function NoKey() {
       date={todayLocalDate()}
       body={
         <p className="text-sm text-muted-foreground">
-          Set an Anthropic key in{" "}
+          Set a Gemini API key in{" "}
           <Link href="/settings" className="text-primary hover:underline">
             /settings
           </Link>{" "}

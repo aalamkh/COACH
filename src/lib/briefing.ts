@@ -1,11 +1,10 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { briefings, notes, progress, retros, tasks } from "@/db/schema";
-import { MissingApiKeyError } from "./anthropic";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateJson, MissingApiKeyError, Type } from "./gemini";
+import { readSettings } from "./env";
 
 // ───────── date helpers ─────────
 
@@ -211,11 +210,11 @@ export async function gatherBriefingContext(): Promise<BriefingContext> {
   };
 }
 
-// ───────── Anthropic ─────────
+// ───────── AI ─────────
 
 export const briefingJsonSchema = z.object({
   message_md: z.string().min(1),
-  priority_task_id: z.union([z.number().int().positive(), z.null()]).optional().nullable(),
+  priority_task_id: z.union([z.number().int().positive(), z.null()]).nullable(),
 });
 export type BriefingJson = z.infer<typeof briefingJsonSchema>;
 
@@ -227,19 +226,6 @@ export interface BriefingResult {
 }
 
 const SYSTEM_PROMPT = `You are the developer's coach for a 14-week plan to ship a paid niche product. Write a 3-5 sentence briefing for today. First sentence: what the single most important thing to do today is. Second sentence: why, in concrete terms from their recent activity. Third sentence onwards: one specific tactical note — a risk to watch, a shortcut to take, or a blocker to clear. No greeting. No "you've got this." No lists. Sound like a direct manager who read the full status and has opinions. If they're behind pace, say so. If they're drifting off the plan, say so. End by naming the single task_id they should open next.`;
-
-const TOOL = {
-  name: "submit_briefing",
-  description: "Return today's briefing message and the priority task id.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      message_md: { type: "string" },
-      priority_task_id: { type: ["integer", "null"] },
-    },
-    required: ["message_md", "priority_task_id"],
-  },
-};
 
 function userMessage(ctx: BriefingContext): string {
   const lines: string[] = [];
@@ -303,53 +289,36 @@ export async function generateBriefing(): Promise<BriefingResult> {
   if (!apiKey) throw new MissingApiKeyError();
 
   const ctx = await gatherBriefingContext();
-  const client = new Anthropic({ apiKey });
 
-  const response = await client.messages.create({
-    model: MODEL_IDS[gradingModel],
-    max_tokens: 400,
+  const result = await generateJson({
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: userMessage(ctx),
+    model: gradingModel,
     temperature: 0.5,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
+    maxOutputTokens: 600,
+    schema: {
+      type: Type.OBJECT,
+      properties: {
+        message_md: { type: Type.STRING },
+        priority_task_id: { type: Type.INTEGER, nullable: true },
       },
-    ],
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: TOOL.name },
-    messages: [{ role: "user", content: userMessage(ctx) }],
+      required: ["message_md", "priority_task_id"],
+    },
+    zodSchema: briefingJsonSchema,
   });
 
-  const toolUse = response.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Anthropic response missing tool_use block.");
-  }
-
-  const parsed = briefingJsonSchema.parse(toolUse.input);
-
-  // Validate the priority_task_id against our candidate list to avoid stale ids.
   let priorityTaskId: number | null = null;
-  if (typeof parsed.priority_task_id === "number") {
-    if (ctx.candidateTaskIds.includes(parsed.priority_task_id)) {
-      priorityTaskId = parsed.priority_task_id;
-    } else {
-      // Fallback to first candidate if model invented one.
-      priorityTaskId = ctx.candidateTaskIds[0] ?? null;
-    }
+  if (typeof result.data.priority_task_id === "number") {
+    priorityTaskId = ctx.candidateTaskIds.includes(result.data.priority_task_id)
+      ? result.data.priority_task_id
+      : ctx.candidateTaskIds[0] ?? null;
   }
-
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
 
   return {
-    messageMd: parsed.message_md,
+    messageMd: result.data.message_md,
     priorityTaskId,
-    tokenCost,
-    model: MODEL_IDS[gradingModel],
+    tokenCost: result.tokenCost,
+    model: result.model,
   };
 }
 

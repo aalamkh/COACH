@@ -53,7 +53,7 @@ export async function StuckCard({ taskId, status, startedAt, snoozedUntil }: Pro
             You started this {ageLabel} ago. Want unblocking help?
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            One Anthropic call. Reads the task, your notes on it, and your latest submission
+            One AI call. Reads the task, your notes on it, and your latest submission
             attempt.
           </p>
         </div>

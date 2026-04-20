@@ -1,10 +1,9 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { notes, submissions, tasks, type Task } from "@/db/schema";
-import { MissingApiKeyError } from "./anthropic";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateText, MissingApiKeyError } from "./gemini";
+import { readSettings } from "./env";
 
 export interface UnblockResult {
   suggestionMd: string;
@@ -66,45 +65,22 @@ export async function generateUnblockSuggestion(params: { task: Task; hoursInPro
     .get();
   const lastSubmissionContent = lastSub?.content ?? null;
 
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: MODEL_IDS[gradingModel],
-    max_tokens: 600,
+  const result = await generateText({
+    systemPrompt: SYSTEM_PROMPT_TEMPLATE(params.hoursInProgress, params.task.id),
+    userPrompt: userMessage(
+      params.task,
+      params.hoursInProgress,
+      noteStrings,
+      lastSubmissionContent ? clamp(lastSubmissionContent, 4000) : null,
+    ),
+    model: gradingModel,
     temperature: 0.4,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT_TEMPLATE(params.hoursInProgress, params.task.id),
-        // System changes per call (hours/task_id); skip cache_control.
-      },
-    ],
-    messages: [
-      {
-        role: "user",
-        content: userMessage(
-          params.task,
-          params.hoursInProgress,
-          noteStrings,
-          lastSubmissionContent ? clamp(lastSubmissionContent, 4000) : null,
-        ),
-      },
-    ],
+    maxOutputTokens: 800,
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Anthropic response missing text block.");
-  }
-
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
-
   return {
-    suggestionMd: textBlock.text,
-    tokenCost,
-    model: MODEL_IDS[gradingModel],
+    suggestionMd: result.text,
+    tokenCost: result.tokenCost,
+    model: result.model,
   };
 }

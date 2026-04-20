@@ -11,3 +11,6 @@ next-env.d.ts
 data/
 drizzle/meta/_journal.json.bak
 .env*.local
+
+# Local Netlify folder
+.netlify

@@ -1,5 +1,4 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
@@ -13,8 +12,8 @@ import {
   tasks,
   type RetroAnswers,
 } from "@/db/schema";
-import { MissingApiKeyError } from "./anthropic";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateText, MissingApiKeyError } from "./gemini";
+import { readSettings } from "./env";
 
 // ───────── week status ─────────
 
@@ -317,35 +316,17 @@ export async function generateRetroAssessment(params: {
   const { apiKey, gradingModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: MODEL_IDS[gradingModel],
-    max_tokens: 2500,
+  const result = await generateText({
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: userMessage(params.week, params.answers, params.summary),
+    model: gradingModel,
     temperature: 0.4,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    messages: [{ role: "user", content: userMessage(params.week, params.answers, params.summary) }],
+    maxOutputTokens: 2500,
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Anthropic response missing text block.");
-  }
-
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
-
   return {
-    assessmentMd: textBlock.text,
-    tokenCost,
-    model: MODEL_IDS[gradingModel],
+    assessmentMd: result.text,
+    tokenCost: result.tokenCost,
+    model: result.model,
   };
 }

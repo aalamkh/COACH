@@ -452,7 +452,7 @@ function LessonTab({
     return (
       <div className="rounded-lg border bg-card p-6 text-sm shadow-sm">
         <p className="text-muted-foreground">
-          Lesson generation needs an Anthropic key. Add it in{" "}
+          Lesson generation needs a Gemini API key. Add it in{" "}
           <Link href="/settings" className="text-primary hover:underline">
             /settings
           </Link>

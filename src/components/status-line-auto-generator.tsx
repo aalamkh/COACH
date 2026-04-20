@@ -31,16 +31,16 @@ export function StatusLineAutoGenerator() {
     if (isBillingError(error)) {
       return (
         <p className="text-sm text-muted-foreground">
-          AI features paused — add credits at{" "}
+          AI features paused — getting rate-limited. Wait a minute and refresh, or grab a fresh Gemini key at{" "}
           <a
-            href="https://console.anthropic.com/settings/billing"
+            href="https://aistudio.google.com/apikey"
             target="_blank"
             rel="noreferrer"
             className="text-primary hover:underline"
           >
-            console.anthropic.com/settings/billing
-          </a>{" "}
-          to resume.
+            aistudio.google.com/apikey
+          </a>
+          .
         </p>
       );
     }

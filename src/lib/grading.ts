@@ -1,8 +1,10 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateJson, MissingApiKeyError, Type } from "./gemini";
+import { readSettings } from "./env";
 import type { Task } from "@/db/schema";
+
+export { MissingApiKeyError };
 
 export const gradeJsonSchema = z.object({
   grade: z.enum(["pass", "revise", "fail"]),
@@ -19,40 +21,17 @@ export interface GradeResult {
   model: string;
 }
 
-export class MissingApiKeyError extends Error {
-  constructor() {
-    super("ANTHROPIC_API_KEY not set. Add it in /settings.");
-    this.name = "MissingApiKeyError";
-  }
-}
-
 const SYSTEM_PROMPT = `You are grading a mid-level developer's work on a specific task. Treat them as a peer, not a student. Be specific: cite exact words in their answer. No cheerleading language. If grade is not 'pass', give ONE concrete next action. Return JSON: {grade: 'pass' | 'revise' | 'fail', feedback_md: string, specific_issues: string[]}.
 
 For github_commit, evaluate the actual diff against success criteria — do the files exist, does the code do what was asked, are there obvious bugs. For url, evaluate whether the page meets the success criteria.
 
 When grading a resubmission, you MUST reference whether each previous specific_issue has been resolved. If the developer ignored prior feedback, say so directly.`;
 
-const TOOL_DEFINITION = {
-  name: "submit_grade",
-  description:
-    "Return the grade, feedback_md (GitHub-flavored markdown), and specific_issues (list of citeable problems, empty array if grade=pass).",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      grade: { type: "string", enum: ["pass", "revise", "fail"] },
-      feedback_md: { type: "string" },
-      specific_issues: { type: "array", items: { type: "string" } },
-    },
-    required: ["grade", "feedback_md", "specific_issues"],
-  },
-};
-
 export interface PreviousSubmissionContext {
   grade: string;
   feedbackMd: string;
   specificIssues: string[];
   content: string;
-  /** For github_commit: the diff of the previous commit (optional). */
   oldDiffBlock?: string | null;
 }
 
@@ -78,7 +57,8 @@ ${submissionContent}`;
   if (extraContext) message += `\n\n${extraContext}`;
 
   if (previous) {
-    const issues = previous.specificIssues.length > 0 ? previous.specificIssues.join(", ") : "(none listed)";
+    const issues =
+      previous.specificIssues.length > 0 ? previous.specificIssues.join(", ") : "(none listed)";
     message += `\n\nPREVIOUS SUBMISSION FEEDBACK (grade: ${previous.grade}):
 ${previous.feedbackMd}
 
@@ -104,51 +84,34 @@ export async function gradeSubmission(params: {
   const { apiKey, gradingModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const client = new Anthropic({ apiKey });
-
-  const response = await client.messages.create({
-    model: MODEL_IDS[gradingModel],
-    max_tokens: 2000,
+  const result = await generateJson({
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: userMessage(
+      params.task,
+      params.submissionContent,
+      params.extraContext ?? null,
+      params.previousSubmission ?? null,
+    ),
+    model: gradingModel,
     temperature: 0.3,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
+    maxOutputTokens: 3000,
+    schema: {
+      type: Type.OBJECT,
+      properties: {
+        grade: { type: Type.STRING, enum: ["pass", "revise", "fail"] },
+        feedback_md: { type: Type.STRING },
+        specific_issues: { type: Type.ARRAY, items: { type: Type.STRING } },
       },
-    ],
-    tools: [TOOL_DEFINITION],
-    tool_choice: { type: "tool", name: TOOL_DEFINITION.name },
-    messages: [
-      {
-        role: "user",
-        content: userMessage(
-          params.task,
-          params.submissionContent,
-          params.extraContext ?? null,
-          params.previousSubmission ?? null,
-        ),
-      },
-    ],
+      required: ["grade", "feedback_md", "specific_issues"],
+    },
+    zodSchema: gradeJsonSchema,
   });
 
-  const toolUse = response.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Anthropic response missing tool_use block.");
-  }
-
-  const parsed = gradeJsonSchema.parse(toolUse.input);
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
-
   return {
-    grade: parsed.grade,
-    feedback_md: parsed.feedback_md,
-    specific_issues: parsed.specific_issues,
-    tokenCost,
-    model: MODEL_IDS[gradingModel],
+    grade: result.data.grade,
+    feedback_md: result.data.feedback_md,
+    specific_issues: result.data.specific_issues,
+    tokenCost: result.tokenCost,
+    model: result.model,
   };
 }

@@ -1,5 +1,4 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db/client";
@@ -12,8 +11,8 @@ import {
   tasks,
   type PaceLabel,
 } from "@/db/schema";
-import { MissingApiKeyError } from "./anthropic";
-import { MODEL_IDS, readSettings } from "./env";
+import { generateJson, MissingApiKeyError, Type } from "./gemini";
+import { readSettings } from "./env";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -187,40 +186,28 @@ const themesJsonSchema = z.object({
   themes: z.array(z.string().min(1).max(120)).max(8),
 });
 
-const THEME_TOOL = {
-  name: "submit_themes",
-  description: "Return up to 5 short, comma-list-friendly unresolved themes.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      themes: { type: "array", items: { type: "string" }, minItems: 0, maxItems: 8 },
-    },
-    required: ["themes"],
-  },
-};
-
 const THEMES_SYSTEM = `From the retro assessment below, extract up to 5 short, distinct phrases (3-8 words each) describing UNRESOLVED concerns the developer should still address. No advice, no actions, just the open threads. Skip anything already resolved. Phrases only — no full sentences.`;
 
 async function extractThemesForRetro(
-  apiKey: string,
   retroId: number,
   assessmentMd: string,
 ): Promise<string[]> {
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: MODEL_IDS.haiku,
-    max_tokens: 300,
+  const result = await generateJson({
+    systemPrompt: THEMES_SYSTEM,
+    userPrompt: assessmentMd,
+    model: "haiku",
     temperature: 0.2,
-    system: [{ type: "text", text: THEMES_SYSTEM, cache_control: { type: "ephemeral" } }],
-    tools: [THEME_TOOL],
-    tool_choice: { type: "tool", name: THEME_TOOL.name },
-    messages: [{ role: "user", content: assessmentMd }],
+    maxOutputTokens: 300,
+    schema: {
+      type: Type.OBJECT,
+      properties: {
+        themes: { type: Type.ARRAY, items: { type: Type.STRING } },
+      },
+      required: ["themes"],
+    },
+    zodSchema: themesJsonSchema,
   });
-  const tool = response.content.find((b) => b.type === "tool_use");
-  if (!tool || tool.type !== "tool_use") return [];
-  const parsed = themesJsonSchema.safeParse(tool.input);
-  const themes = parsed.success ? parsed.data.themes.slice(0, 5) : [];
-
+  const themes = result.data.themes.slice(0, 5);
   await db
     .update(retros)
     .set({ unresolvedThemesJson: themes })
@@ -229,7 +216,7 @@ async function extractThemesForRetro(
   return themes;
 }
 
-async function loadLatestRetroThemes(apiKey: string): Promise<{
+async function loadLatestRetroThemes(): Promise<{
   week: number;
   themes: string[];
 } | null> {
@@ -251,7 +238,7 @@ async function loadLatestRetroThemes(apiKey: string): Promise<{
   }
   // Lazy-extract.
   try {
-    const themes = await extractThemesForRetro(apiKey, last.id, last.assessmentMd);
+    const themes = await extractThemesForRetro(last.id, last.assessmentMd);
     return { week: last.week, themes };
   } catch {
     return { week: last.week, themes: [] };
@@ -273,22 +260,6 @@ export interface StatusResult {
 }
 
 const STATUS_SYSTEM = `Write one paragraph (2-4 sentences) stating exactly where this developer is on their 14-week plan. Facts only. No motivation. No "keep going." Name: pace relative to plan, one specific thing they recently passed, one specific thing still open. If they're off pace, say so. If they've been stuck on the same task 3+ days, say so by name. End with the single most important open thread they should close this week. Sound like a direct manager reading status, not a chatbot.`;
-
-const STATUS_TOOL = {
-  name: "submit_status",
-  description: "Return today's status paragraph + a pace label.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      message_md: { type: "string" },
-      pace_label: {
-        type: "string",
-        enum: ["on_pace", "slightly_behind", "ahead", "off_track"],
-      },
-    },
-    required: ["message_md", "pace_label"],
-  },
-};
 
 function userMessage(ctx: PaceContext, retroThemes: { week: number; themes: string[] } | null) {
   const lines: string[] = [];
@@ -346,38 +317,33 @@ export async function generateStatusLine(): Promise<StatusResult> {
   if (!apiKey) throw new MissingApiKeyError();
 
   const ctx = await gatherPaceContext();
-  const retroThemes = await loadLatestRetroThemes(apiKey);
+  const retroThemes = await loadLatestRetroThemes();
 
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: MODEL_IDS[gradingModel],
-    max_tokens: 200,
+  const result = await generateJson({
+    systemPrompt: STATUS_SYSTEM,
+    userPrompt: userMessage(ctx, retroThemes),
+    model: gradingModel,
     temperature: 0.4,
-    system: [
-      { type: "text", text: STATUS_SYSTEM, cache_control: { type: "ephemeral" } },
-    ],
-    tools: [STATUS_TOOL],
-    tool_choice: { type: "tool", name: STATUS_TOOL.name },
-    messages: [{ role: "user", content: userMessage(ctx, retroThemes) }],
+    maxOutputTokens: 400,
+    schema: {
+      type: Type.OBJECT,
+      properties: {
+        message_md: { type: Type.STRING },
+        pace_label: {
+          type: Type.STRING,
+          enum: ["on_pace", "slightly_behind", "ahead", "off_track"],
+        },
+      },
+      required: ["message_md", "pace_label"],
+    },
+    zodSchema: statusJsonSchema,
   });
 
-  const tool = response.content.find((b) => b.type === "tool_use");
-  if (!tool || tool.type !== "tool_use") {
-    throw new Error("Anthropic response missing tool_use block.");
-  }
-  const parsed = statusJsonSchema.parse(tool.input);
-
-  const tokenCost =
-    (response.usage.input_tokens ?? 0) +
-    (response.usage.output_tokens ?? 0) +
-    (response.usage.cache_creation_input_tokens ?? 0) +
-    (response.usage.cache_read_input_tokens ?? 0);
-
   return {
-    messageMd: parsed.message_md,
-    paceLabel: parsed.pace_label,
-    tokenCost,
-    model: MODEL_IDS[gradingModel],
+    messageMd: result.data.message_md,
+    paceLabel: result.data.pace_label,
+    tokenCost: result.tokenCost,
+    model: result.model,
   };
 }
 

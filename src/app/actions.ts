@@ -23,7 +23,7 @@ import {
   MissingApiKeyError,
   gradeSubmission,
   type PreviousSubmissionContext,
-} from "@/lib/anthropic";
+} from "@/lib/grading";
 import { GithubFetchError, fetchCommit, parseCommitUrl } from "@/lib/github";
 import { generateLesson, SIMPLER_INSTRUCTION } from "@/lib/lesson";
 import { buildWeekSummary, generateRetroAssessment } from "@/lib/retro";
