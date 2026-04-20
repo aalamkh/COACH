@@ -70,11 +70,10 @@ export interface PaceContext {
   currentPointer: { week: number; day: number } | null;
 }
 
-export function gatherPaceContext(): PaceContext {
+export async function gatherPaceContext(): Promise<PaceContext> {
   const todayDate = todayLocalDate();
 
-  // Plan progress (week ≥ 1 only — AI track excluded).
-  const planRows = db
+  const planRows = await db
     .select({
       week: tasks.week,
       day: tasks.day,
@@ -151,9 +150,8 @@ export function gatherPaceContext(): PaceContext {
       });
     }
   }
-  const retroWeeks = new Set(
-    db.select({ week: retros.week }).from(retros).all().map((r) => r.week),
-  );
+  const retroWeekRows = await db.select({ week: retros.week }).from(retros).all();
+  const retroWeeks = new Set(retroWeekRows.map((r) => r.week));
   const overdueRetroWeeks: number[] = [];
   for (const [week, info] of lastDayByWeek) {
     if (!info.passedAt) continue;
@@ -223,8 +221,8 @@ async function extractThemesForRetro(
   const parsed = themesJsonSchema.safeParse(tool.input);
   const themes = parsed.success ? parsed.data.themes.slice(0, 5) : [];
 
-  // Cache on the row.
-  db.update(retros)
+  await db
+    .update(retros)
     .set({ unresolvedThemesJson: themes })
     .where(eq(retros.id, retroId))
     .run();
@@ -235,7 +233,7 @@ async function loadLatestRetroThemes(apiKey: string): Promise<{
   week: number;
   themes: string[];
 } | null> {
-  const last = db
+  const last = await db
     .select({
       id: retros.id,
       week: retros.week,
@@ -347,7 +345,7 @@ export async function generateStatusLine(): Promise<StatusResult> {
   const { apiKey, gradingModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const ctx = gatherPaceContext();
+  const ctx = await gatherPaceContext();
   const retroThemes = await loadLatestRetroThemes(apiKey);
 
   const client = new Anthropic({ apiKey });
@@ -383,13 +381,13 @@ export async function generateStatusLine(): Promise<StatusResult> {
   };
 }
 
-export function loadTodayStatusLine() {
+export async function loadTodayStatusLine() {
   return (
-    db
+    (await db
       .select()
       .from(statusLines)
       .where(eq(statusLines.statusDate, todayLocalDate()))
-      .get() ?? null
+      .get()) ?? null
   );
 }
 
@@ -401,10 +399,10 @@ export interface ShippedThisWeek {
   noteTaskTitles: string[];
 }
 
-export function loadShippedThisWeek(): ShippedThisWeek {
+export async function loadShippedThisWeek(): Promise<ShippedThisWeek> {
   const monday = startOfWeekLocal();
 
-  const passedRows = db
+  const passedRows = await db
     .select({ id: tasks.id, week: tasks.week, day: tasks.day, title: tasks.title })
     .from(submissions)
     .innerJoin(tasks, eq(tasks.id, submissions.taskId))
@@ -423,22 +421,22 @@ export function loadShippedThisWeek(): ShippedThisWeek {
     return true;
   });
 
-  const retroWeeks = db
+  const retroRows = await db
     .select({ week: retros.week })
     .from(retros)
     .where(gte(retros.generatedAt, monday))
     .orderBy(asc(retros.week))
-    .all()
-    .map((r) => r.week);
+    .all();
+  const retroWeeks = retroRows.map((r) => r.week);
 
-  const noteTaskTitles = db
+  const noteTitleRows = await db
     .select({ title: tasks.title })
     .from(notes)
     .innerJoin(tasks, eq(tasks.id, notes.taskId))
     .where(and(isNotNull(notes.taskId), gte(notes.createdAt, monday)))
     .orderBy(asc(tasks.week), asc(tasks.day))
-    .all()
-    .map((r) => r.title);
+    .all();
+  const noteTaskTitles = noteTitleRows.map((r) => r.title);
   // Dedupe while preserving order.
   const seen = new Set<string>();
   const dedupedTitles: string[] = [];

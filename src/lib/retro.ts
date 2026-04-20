@@ -30,12 +30,11 @@ export interface WeekStatus {
   hasRetro: boolean;
 }
 
-export function loadWeekStatuses(): WeekStatus[] {
-  const allRetros = db.select({ week: retros.week }).from(retros).all();
+export async function loadWeekStatuses(): Promise<WeekStatus[]> {
+  const allRetros = await db.select({ week: retros.week }).from(retros).all();
   const retroWeeks = new Set(allRetros.map((r) => r.week));
 
-  // Last-day task per week (highest day).
-  const lastTasks = db
+  const lastTasks = await db
     .select({
       week: tasks.week,
       day: tasks.day,
@@ -77,8 +76,8 @@ export type RetroBanner =
   | { kind: "overdue"; week: number; daysOverdue: number };
 
 /** Banners to render on the dashboard. */
-export function retroBanners(): RetroBanner[] {
-  const statuses = loadWeekStatuses();
+export async function retroBanners(): Promise<RetroBanner[]> {
+  const statuses = await loadWeekStatuses();
   const now = Date.now();
   const out: RetroBanner[] = [];
   for (const s of statuses) {
@@ -102,8 +101,8 @@ export interface PassedTitle {
   title: string;
 }
 
-export function passedTitlesForWeek(week: number): PassedTitle[] {
-  return db
+export async function passedTitlesForWeek(week: number): Promise<PassedTitle[]> {
+  return await db
     .select({ day: tasks.day, title: tasks.title })
     .from(tasks)
     .innerJoin(progress, eq(progress.taskId, tasks.id))
@@ -130,9 +129,9 @@ function clamp(text: string, n: number): string {
   return text.length > n ? text.slice(0, n).trim() + "…" : text;
 }
 
-export function buildWeekSummary(week: number): WeekSummary {
+export async function buildWeekSummary(week: number): Promise<WeekSummary> {
   // Most recent submission per task in this week.
-  const subs = db
+  const subs = await db
     .select({
       taskId: submissions.taskId,
       taskDay: tasks.day,
@@ -174,7 +173,7 @@ export function buildWeekSummary(week: number): WeekSummary {
   const weekTaskIds = Array.from(taskMap.keys());
   const linkedNotes =
     weekTaskIds.length > 0
-      ? db
+      ? await db
           .select({
             createdAt: notes.createdAt,
             body: notes.bodyMd,
@@ -187,8 +186,7 @@ export function buildWeekSummary(week: number): WeekSummary {
           .all()
       : [];
 
-  // Quiz: latest attempt per question for lessons of this week.
-  const lessonsThisWeek = db
+  const lessonsThisWeek = await db
     .select({ id: lessons.id, taskId: lessons.taskId, taskTitle: tasks.title })
     .from(lessons)
     .innerJoin(tasks, eq(tasks.id, lessons.taskId))
@@ -197,14 +195,14 @@ export function buildWeekSummary(week: number): WeekSummary {
 
   const quizSummary: WeekSummary["quiz"] = [];
   for (const l of lessonsThisWeek) {
-    const qs = db
+    const qs = await db
       .select({ id: quizQuestions.id })
       .from(quizQuestions)
       .where(eq(quizQuestions.lessonId, l.id))
       .all();
     if (qs.length === 0) continue;
     const ids = qs.map((q) => q.id);
-    const attempts = db
+    const attempts = await db
       .select({
         questionId: quizAttempts.questionId,
         correct: quizAttempts.correct,

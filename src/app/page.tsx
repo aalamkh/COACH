@@ -24,21 +24,24 @@ const TYPE_LABEL: Record<SubmissionType, string> = {
 };
 
 export default async function HomePage() {
-  const pointer = currentPointer();
-  const summary = progressSummary();
-  const today = todaysTasks();
-  const banners = retroBanners();
-  const { githubUsername } = await readSettings();
+  const [pointer, summary, today, banners, settings, status] = await Promise.all([
+    currentPointer(),
+    progressSummary(),
+    todaysTasks(),
+    retroBanners(),
+    readSettings(),
+    loadTodayStatusLine() as Promise<StatusLine | null>,
+  ]);
+  const githubUsername = settings.githubUsername;
   const commits = await recentPushCommits(githubUsername, 5);
-  const status = loadTodayStatusLine() as StatusLine | null;
 
   return (
     <div className="space-y-8">
-      <header className="flex flex-wrap items-end justify-between gap-6">
+      <header className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-end md:justify-between md:gap-6">
         <div className="space-y-1">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">Current</div>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-semibold tracking-tight">
+            <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
               {pointer ? `Week ${pointer.week} · Day ${pointer.day}` : "All tasks passed"}
             </h1>
             {status ? (
@@ -65,7 +68,7 @@ export default async function HomePage() {
         </div>
       ) : null}
 
-      <section className="grid gap-6 md:grid-cols-[1fr_340px]">
+      <section className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-6">
           <div>
             <h2 className="mb-3 text-lg font-semibold tracking-tight">Today's tasks</h2>
@@ -172,7 +175,7 @@ function RetroBannerCard({ banner }: { banner: RetroBanner }) {
 
 function ProgressBar({ summary }: { summary: { passed: number; total: number; pct: number } }) {
   return (
-    <div className="min-w-[220px] text-right">
+    <div className="w-full text-left md:w-auto md:min-w-[220px] md:text-right">
       <div className="text-xs text-muted-foreground">Progress</div>
       <div className="text-sm font-medium">
         {summary.passed} / {summary.total} passed · {summary.pct}%

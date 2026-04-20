@@ -70,14 +70,13 @@ function clamp(text: string, n: number): string {
   return text.length > n ? text.slice(0, n).trim() + "…" : text;
 }
 
-export function gatherBriefingContext(): BriefingContext {
+export async function gatherBriefingContext(): Promise<BriefingContext> {
   const todayDate = todayLocalDate();
   const startToday = startOfTodayLocal();
   const endToday = endOfTodayLocal();
   const fortyEightAgo = new Date(Date.now() - 48 * HOUR_MS);
 
-  // currentPointer
-  const ptrRow = db
+  const ptrRow = await db
     .select({ week: tasks.week, day: tasks.day })
     .from(tasks)
     .innerJoin(progress, eq(progress.taskId, tasks.id))
@@ -88,8 +87,7 @@ export function gatherBriefingContext(): BriefingContext {
   const currentPointer = ptrRow ? { week: ptrRow.week, day: ptrRow.day } : null;
   const phase = currentPointer ? phaseForWeek(currentPointer.week) : "Plan complete";
 
-  // passed in last 48h
-  const passed = db
+  const passed = await db
     .select({
       id: tasks.id,
       week: tasks.week,
@@ -111,8 +109,7 @@ export function gatherBriefingContext(): BriefingContext {
     passedAt: (r.passedAt as Date).toISOString(),
   }));
 
-  // in_progress
-  const inP = db
+  const inP = await db
     .select({
       id: tasks.id,
       week: tasks.week,
@@ -141,7 +138,7 @@ export function gatherBriefingContext(): BriefingContext {
   // unsnoozing today (snoozed_until between start of today and end of today)
   const unsnoozingTodaySec = Math.floor(startToday.getTime() / 1000);
   const endTodaySec = Math.floor(endToday.getTime() / 1000);
-  const unsnoozing = db
+  const unsnoozing = await db
     .select({
       id: tasks.id,
       week: tasks.week,
@@ -155,8 +152,7 @@ export function gatherBriefingContext(): BriefingContext {
     )
     .all();
 
-  // last 5 notes
-  const recentNoteRows = db
+  const recentNoteRows = await db
     .select({
       createdAt: notes.createdAt,
       body: notes.bodyMd,
@@ -174,8 +170,7 @@ export function gatherBriefingContext(): BriefingContext {
     taskTitle: n.taskTitle,
   }));
 
-  // last retro with assessment
-  const lastRetro = db
+  const lastRetro = await db
     .select({ week: retros.week, assessmentMd: retros.claudeAssessmentMd })
     .from(retros)
     .where(isNotNull(retros.claudeAssessmentMd))
@@ -183,9 +178,8 @@ export function gatherBriefingContext(): BriefingContext {
     .limit(1)
     .get();
 
-  // Candidate task ids: today's tasks (available + in_progress, non-snoozed)
   const nowSec = Math.floor(now / 1000);
-  const candidates = db
+  const candidates = await db
     .select({ id: tasks.id })
     .from(tasks)
     .innerJoin(progress, eq(progress.taskId, tasks.id))
@@ -308,7 +302,7 @@ export async function generateBriefing(): Promise<BriefingResult> {
   const { apiKey, gradingModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const ctx = gatherBriefingContext();
+  const ctx = await gatherBriefingContext();
   const client = new Anthropic({ apiKey });
 
   const response = await client.messages.create({
@@ -359,7 +353,7 @@ export async function generateBriefing(): Promise<BriefingResult> {
   };
 }
 
-export function loadTodayBriefing() {
+export async function loadTodayBriefing() {
   const date = todayLocalDate();
-  return db.select().from(briefings).where(eq(briefings.briefingDate, date)).get() ?? null;
+  return (await db.select().from(briefings).where(eq(briefings.briefingDate, date)).get()) ?? null;
 }

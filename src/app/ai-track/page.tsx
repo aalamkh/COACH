@@ -15,7 +15,7 @@ interface Row {
 }
 
 export default async function AITrackPage() {
-  const rows = db
+  const rows = (await db
     .select({
       id: tasks.id,
       day: tasks.day,
@@ -27,7 +27,7 @@ export default async function AITrackPage() {
     .innerJoin(progress, eq(progress.taskId, tasks.id))
     .where(eq(tasks.week, 0))
     .orderBy(asc(tasks.day))
-    .all() as Row[];
+    .all()) as Row[];
 
   const passed = rows.filter((r) => r.status === "passed").length;
 

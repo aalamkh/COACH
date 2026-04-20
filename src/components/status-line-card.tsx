@@ -7,7 +7,7 @@ import { readSettings } from "@/lib/env";
 import type { StatusLine } from "@/db/schema";
 
 export async function StatusLineCard() {
-  const row = loadTodayStatusLine() as StatusLine | null;
+  const row = (await loadTodayStatusLine()) as StatusLine | null;
   if (row) return <Filled row={row} />;
   const { apiKey } = await readSettings();
   if (!apiKey) return <NoKey />;

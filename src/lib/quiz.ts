@@ -29,10 +29,10 @@ export interface LessonQuiz {
   gate: QuizGateState;
 }
 
-export function loadLessonQuiz(lessonId: number | null): LessonQuiz | null {
+export async function loadLessonQuiz(lessonId: number | null): Promise<LessonQuiz | null> {
   if (lessonId === null) return null;
 
-  const questionRows = db
+  const questionRows = await db
     .select({
       id: quizQuestions.id,
       question: quizQuestions.question,
@@ -45,9 +45,9 @@ export function loadLessonQuiz(lessonId: number | null): LessonQuiz | null {
     .all();
 
   const ids = questionRows.map((q) => q.id);
-  let latestByQuestion = new Map<number, LatestAttempt>();
+  const latestByQuestion = new Map<number, LatestAttempt>();
   if (ids.length > 0) {
-    const allAttempts = db
+    const allAttempts = await db
       .select({
         questionId: quizAttempts.questionId,
         selectedIndex: quizAttempts.selectedIndex,

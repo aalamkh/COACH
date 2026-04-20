@@ -9,11 +9,12 @@ import { progress, tasks, type Status, type SubmissionType } from "@/db/schema";
  * get the pass — no unlock cascade since the whole track is open from start.
  */
 export async function markPassedAndUnlockNext(taskId: number) {
-  const cur = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+  const cur = await db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!cur) return;
 
   const now = new Date();
-  db.update(progress)
+  await db
+    .update(progress)
     .set({ status: "passed", passedAt: now })
     .where(eq(progress.taskId, taskId))
     .run();
@@ -23,20 +24,21 @@ export async function markPassedAndUnlockNext(taskId: number) {
   const nextWeek = cur.day === 7 ? cur.week + 1 : cur.week;
   const nextDay = cur.day === 7 ? 1 : cur.day + 1;
 
-  const nextTask = db
+  const nextTask = await db
     .select({ id: tasks.id })
     .from(tasks)
     .where(and(eq(tasks.week, nextWeek), eq(tasks.day, nextDay)))
     .get();
   if (!nextTask) return;
 
-  const nextProgress = db
+  const nextProgress = await db
     .select({ status: progress.status })
     .from(progress)
     .where(eq(progress.taskId, nextTask.id))
     .get();
   if (nextProgress && nextProgress.status === "locked") {
-    db.update(progress)
+    await db
+      .update(progress)
       .set({ status: "available" })
       .where(eq(progress.taskId, nextTask.id))
       .run();
@@ -49,8 +51,8 @@ export interface CurrentPointer {
 }
 
 /** Lowest (week, day) among tasks that are 'available' or 'in_progress'. Excludes the week=0 AI track. */
-export function currentPointer(): CurrentPointer | null {
-  const row = db
+export async function currentPointer(): Promise<CurrentPointer | null> {
+  const row = await db
     .select({ week: tasks.week, day: tasks.day })
     .from(tasks)
     .innerJoin(progress, eq(progress.taskId, tasks.id))
@@ -67,9 +69,8 @@ export interface ProgressSummary {
   pct: number;
 }
 
-export function progressSummary(): ProgressSummary {
-  // Exclude the AI track (week=0) — main progress is the 14-week plan only.
-  const rows = db
+export async function progressSummary(): Promise<ProgressSummary> {
+  const rows = await db
     .select({ status: progress.status })
     .from(progress)
     .innerJoin(tasks, eq(tasks.id, progress.taskId))
@@ -91,9 +92,9 @@ export interface TodayTask {
 }
 
 /** All tasks currently 'available' or 'in_progress', excluding snoozed and the week=0 AI track. */
-export function todaysTasks(): TodayTask[] {
+export async function todaysTasks(): Promise<TodayTask[]> {
   const now = new Date();
-  return db
+  return (await db
     .select({
       id: tasks.id,
       week: tasks.week,
@@ -109,22 +110,25 @@ export function todaysTasks(): TodayTask[] {
       and(
         inArray(progress.status, ["available", "in_progress"]),
         gt(tasks.week, 0),
-        or(isNull(progress.snoozedUntil), sql`${progress.snoozedUntil} <= ${Math.floor(now.getTime() / 1000)}`),
+        or(
+          isNull(progress.snoozedUntil),
+          sql`${progress.snoozedUntil} <= ${Math.floor(now.getTime() / 1000)}`,
+        ),
       ),
     )
     .orderBy(asc(tasks.week), asc(tasks.day))
-    .all() as TodayTask[];
+    .all()) as TodayTask[];
 }
 
 /** Flip 'available' → 'in_progress' and stamp started_at on first submission. */
 export async function touchStarted(taskId: number) {
-  const row = db.select().from(progress).where(eq(progress.taskId, taskId)).get();
+  const row = await db.select().from(progress).where(eq(progress.taskId, taskId)).get();
   if (!row) return;
-  if (row.status === "passed") return; // don't regress
+  if (row.status === "passed") return;
   const patch: Partial<typeof progress.$inferInsert> = {};
   if (row.status === "available" || row.status === "locked") patch.status = "in_progress";
   if (!row.startedAt) patch.startedAt = new Date();
   if (Object.keys(patch).length > 0) {
-    db.update(progress).set(patch).where(eq(progress.taskId, taskId)).run();
+    await db.update(progress).set(patch).where(eq(progress.taskId, taskId)).run();
   }
 }

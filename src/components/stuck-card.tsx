@@ -32,7 +32,7 @@ export async function StuckCard({ taskId, status, startedAt, snoozedUntil }: Pro
       ? `${days} day${days === 1 ? "" : "s"}`
       : `${hours} hour${hours === 1 ? "" : "s"}`;
 
-  const open = db
+  const open = (await db
     .select()
     .from(unblockSuggestions)
     .where(
@@ -42,7 +42,7 @@ export async function StuckCard({ taskId, status, startedAt, snoozedUntil }: Pro
       ),
     )
     .orderBy(asc(unblockSuggestions.generatedAt))
-    .all() as UnblockSuggestion[];
+    .all()) as UnblockSuggestion[];
 
   return (
     <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-5 shadow-sm">

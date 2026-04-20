@@ -34,8 +34,8 @@ export interface CostStats {
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function loadCostStats(): CostStats {
-  const subs = db
+export async function loadCostStats(): Promise<CostStats> {
+  const subs = await db
     .select({
       model: submissions.model,
       tokenCost: submissions.tokenCost,
@@ -45,7 +45,7 @@ export function loadCostStats(): CostStats {
     .from(submissions)
     .all();
 
-  const lns = db
+  const lns = await db
     .select({
       model: lessons.model,
       tokenCost: lessons.tokenCost,
@@ -136,7 +136,7 @@ export function loadCostStats(): CostStats {
 
   let topTasks: TopTaskRow[] = [];
   if (topTaskIds.length > 0) {
-    const titles = db
+    const titles = await db
       .select({ id: tasks.id, title: tasks.title, week: tasks.week, day: tasks.day })
       .from(tasks)
       .where(inArray(tasks.id, topTaskIds))

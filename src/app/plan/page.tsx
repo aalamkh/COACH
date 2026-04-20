@@ -24,7 +24,7 @@ const TYPE_LABEL: Record<SubmissionType, string> = {
 };
 
 export default async function PlanPage() {
-  const rows = db
+  const rows = (await db
     .select({
       id: tasks.id,
       week: tasks.week,
@@ -39,7 +39,7 @@ export default async function PlanPage() {
     .innerJoin(progress, eq(progress.taskId, tasks.id))
     .where(gt(tasks.week, 0))
     .orderBy(asc(tasks.week), asc(tasks.day))
-    .all() as Row[];
+    .all()) as Row[];
 
   const byWeek = new Map<number, Row[]>();
   for (const r of rows) {

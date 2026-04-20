@@ -1,8 +1,8 @@
 import "server-only";
 import { loadShippedThisWeek, renderShippedParagraph } from "@/lib/status";
 
-export function ShippedThisWeek() {
-  const data = loadShippedThisWeek();
+export async function ShippedThisWeek() {
+  const data = await loadShippedThisWeek();
   const paragraph = renderShippedParagraph(data);
   const empty = !paragraph;
 

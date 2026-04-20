@@ -2,6 +2,8 @@
 
 import { desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/db/client";
 import {
@@ -33,12 +35,58 @@ import { UrlFetchError, fetchUrlText } from "@/lib/url-fetch";
 import { markPassedAndUnlockNext, touchStarted } from "@/lib/progress";
 import {
   modelSchema,
-  writeDotEnv,
+  updateSettingsRow,
   STUCK_HOURS_MAX,
   STUCK_HOURS_MIN,
 } from "@/lib/env";
 
 export type ActionResult<T = unknown> = { ok: true; data: T } | { ok: false; error: string };
+
+// ───────── Auth (password gate) ─────────
+
+const COACH_AUTH_COOKIE = "coach_auth";
+const COACH_AUTH_VALUE = "ok";
+/** Set COACH_PASSWORD in Netlify env. Defaults to "12345" for local dev. */
+function coachPassword(): string {
+  return process.env.COACH_PASSWORD ?? "12345";
+}
+
+const loginSchema = z.object({
+  password: z.string().min(1).max(200),
+  next: z.string().max(500).optional(),
+});
+
+export async function login(formData: FormData): Promise<void> {
+  const parsed = loginSchema.safeParse({
+    password: formData.get("password"),
+    next: formData.get("next") ?? undefined,
+  });
+  if (!parsed.success) redirect("/login?error=invalid");
+
+  if (parsed.data.password !== coachPassword()) {
+    redirect("/login?error=wrong");
+  }
+
+  const jar = await cookies();
+  jar.set(COACH_AUTH_COOKIE, COACH_AUTH_VALUE, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+
+  const nextPath =
+    parsed.data.next && parsed.data.next.startsWith("/") && !parsed.data.next.startsWith("//")
+      ? parsed.data.next
+      : "/";
+  redirect(nextPath);
+}
+
+export async function logout(): Promise<void> {
+  const jar = await cookies();
+  jar.delete(COACH_AUTH_COOKIE);
+  redirect("/login");
+}
 
 // ───────── Submit (any type) ─────────
 
@@ -71,7 +119,7 @@ export async function submitTask(
   }
   const { taskId } = baseParse.data;
 
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+  const task = await db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!task) return { ok: false, error: "Task not found." };
 
   const rawContent = formData.get("content");
@@ -119,7 +167,7 @@ export async function submitTask(
   }
 
   // Resubmission detection: look up the most recent prior submission for this task.
-  const priorRow = db
+  const priorRow = await db
     .select({
       id: submissions.id,
       content: submissions.content,
@@ -153,7 +201,7 @@ export async function submitTask(
     };
   }
 
-  const inserted = db
+  const inserted = await db
     .insert(submissions)
     .values({
       taskId,
@@ -180,7 +228,8 @@ export async function submitTask(
             .join("\n")}`
         : result.feedback_md;
 
-    db.update(submissions)
+    await db
+      .update(submissions)
       .set({
         grade: result.grade,
         feedbackMd: feedback,
@@ -232,7 +281,7 @@ export async function snoozeTask(formData: FormData): Promise<void> {
   });
   if (!parsed.success) return;
 
-  const cur = db
+  const cur = await db
     .select()
     .from(progress)
     .where(eq(progress.taskId, parsed.data.taskId))
@@ -240,7 +289,8 @@ export async function snoozeTask(formData: FormData): Promise<void> {
   if (!cur || cur.status === "passed") return;
 
   const until = midnightPlusDays(parsed.data.days);
-  db.update(progress)
+  await db
+    .update(progress)
     .set({
       status: "in_progress",
       snoozedUntil: until,
@@ -260,7 +310,8 @@ export async function unsnoozeTask(formData: FormData): Promise<void> {
     .safeParse({ taskId: formData.get("taskId") });
   if (!parsed.success) return;
 
-  db.update(progress)
+  await db
+    .update(progress)
     .set({ snoozedUntil: null })
     .where(eq(progress.taskId, parsed.data.taskId))
     .run();
@@ -281,7 +332,8 @@ export async function markPassedOverride(formData: FormData): Promise<void> {
   if (!parsed.success) return;
   const { taskId } = parsed.data;
 
-  db.insert(submissions)
+  await db
+    .insert(submissions)
     .values({
       taskId,
       content: "(manual override)",
@@ -316,18 +368,18 @@ export async function generateLessonForTask(
   if (!parsed.success) return { ok: false, error: "Invalid task id." };
   const { taskId } = parsed.data;
 
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+  const task = await db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!task) return { ok: false, error: "Task not found." };
 
   // Idempotent: if a lesson already exists, return it without spending tokens.
-  const existing = db.select().from(lessons).where(eq(lessons.taskId, taskId)).get();
+  const existing = await db.select().from(lessons).where(eq(lessons.taskId, taskId)).get();
   if (existing) {
     return { ok: true, data: { lessonId: existing.id } };
   }
 
   try {
     const result = await generateLesson(task);
-    const inserted = db
+    const inserted = await db
       .insert(lessons)
       .values({
         taskId,
@@ -340,7 +392,8 @@ export async function generateLessonForTask(
       .returning({ id: lessons.id })
       .get();
 
-    db.insert(quizQuestions)
+    await db
+      .insert(quizQuestions)
       .values(
         result.questions.map((q) => ({
           lessonId: inserted.id,
@@ -368,8 +421,7 @@ export async function generateLessonForTask(
 export async function regenerateLessonForTask(formData: FormData): Promise<void> {
   const parsed = lessonTaskSchema.safeParse({ taskId: formData.get("taskId") });
   if (!parsed.success) return;
-  // FK ON DELETE cascade handles quiz_questions + quiz_attempts.
-  db.delete(lessons).where(eq(lessons.taskId, parsed.data.taskId)).run();
+  await db.delete(lessons).where(eq(lessons.taskId, parsed.data.taskId)).run();
   revalidatePath(`/task/${parsed.data.taskId}`);
 }
 
@@ -383,15 +435,14 @@ export async function regenerateLessonSimplerForTask(
   if (!parsed.success) return { ok: false, error: "Invalid task id." };
   const { taskId } = parsed.data;
 
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+  const task = await db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!task) return { ok: false, error: "Task not found." };
 
-  // Cascade-delete prior lesson + its quiz questions + attempts.
-  db.delete(lessons).where(eq(lessons.taskId, taskId)).run();
+  await db.delete(lessons).where(eq(lessons.taskId, taskId)).run();
 
   try {
     const result = await generateLesson(task, SIMPLER_INSTRUCTION);
-    const inserted = db
+    const inserted = await db
       .insert(lessons)
       .values({
         taskId,
@@ -404,7 +455,8 @@ export async function regenerateLessonSimplerForTask(
       .returning({ id: lessons.id })
       .get();
 
-    db.insert(quizQuestions)
+    await db
+      .insert(quizQuestions)
       .values(
         result.questions.map((q) => ({
           lessonId: inserted.id,
@@ -445,7 +497,7 @@ export async function addNote(formData: FormData): Promise<ActionResult<{ id: nu
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid note." };
   }
-  const inserted = db
+  const inserted = await db
     .insert(notes)
     .values({ bodyMd: parsed.data.body, taskId: parsed.data.taskId ?? null })
     .returning({ id: notes.id })
@@ -462,7 +514,7 @@ const deleteNoteSchema = z.object({ id: z.coerce.number().int().positive() });
 export async function deleteNote(formData: FormData): Promise<void> {
   const parsed = deleteNoteSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) return;
-  db.delete(notes).where(eq(notes.id, parsed.data.id)).run();
+  await db.delete(notes).where(eq(notes.id, parsed.data.id)).run();
   revalidatePath("/notes");
   revalidatePath("/");
 }
@@ -492,7 +544,7 @@ export async function submitQuizAttempts(payload: {
   }
 
   const ids = parsed.data.answers.map((a) => a.questionId);
-  const questions = db
+  const questions = await db
     .select({ id: quizQuestions.id, correctIndex: quizQuestions.correctIndex })
     .from(quizQuestions)
     .where(inArray(quizQuestions.id, ids))
@@ -517,7 +569,7 @@ export async function submitQuizAttempts(payload: {
       answeredAt: now,
     };
   });
-  db.insert(quizAttempts).values(rows).run();
+  await db.insert(quizAttempts).values(rows).run();
 
   revalidatePath(`/task/${parsed.data.taskId}`);
   return { ok: true, data: { correct: correctCount, total: parsed.data.answers.length } };
@@ -548,9 +600,10 @@ export async function submitRetro(formData: FormData): Promise<ActionResult<{ we
   }
   const { week, ...answers } = parsed.data;
 
-  const existing = db.select().from(retros).where(eq(retros.week, week)).get();
+  const existing = await db.select().from(retros).where(eq(retros.week, week)).get();
   if (existing) {
-    db.update(retros)
+    await db
+      .update(retros)
       .set({
         answersJson: answers,
         generatedAt: new Date(),
@@ -560,13 +613,14 @@ export async function submitRetro(formData: FormData): Promise<ActionResult<{ we
       .where(eq(retros.week, week))
       .run();
   } else {
-    db.insert(retros).values({ week, answersJson: answers }).run();
+    await db.insert(retros).values({ week, answersJson: answers }).run();
   }
 
   try {
-    const summary = buildWeekSummary(week);
+    const summary = await buildWeekSummary(week);
     const result = await generateRetroAssessment({ week, answers, summary });
-    db.update(retros)
+    await db
+      .update(retros)
       .set({
         claudeAssessmentMd: result.assessmentMd,
         tokenCost: result.tokenCost,
@@ -603,17 +657,18 @@ export async function regenerateRetroAction(
   if (!parsed.success) return { ok: false, error: "Invalid week." };
   const { week } = parsed.data;
 
-  const existing = db.select().from(retros).where(eq(retros.week, week)).get();
+  const existing = await db.select().from(retros).where(eq(retros.week, week)).get();
   if (!existing) return { ok: false, error: "No retro to regenerate. Submit one first." };
 
   try {
-    const summary = buildWeekSummary(week);
+    const summary = await buildWeekSummary(week);
     const result = await generateRetroAssessment({
       week,
       answers: existing.answersJson,
       summary,
     });
-    db.update(retros)
+    await db
+      .update(retros)
       .set({
         claudeAssessmentMd: result.assessmentMd,
         tokenCost: existing.tokenCost + result.tokenCost,
@@ -648,17 +703,17 @@ export async function requestUnblockSuggestion(
   if (!parsed.success) return { ok: false, error: "Invalid task id." };
   const { taskId } = parsed.data;
 
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+  const task = await db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!task) return { ok: false, error: "Task not found." };
 
-  const prog = db.select().from(progress).where(eq(progress.taskId, taskId)).get();
+  const prog = await db.select().from(progress).where(eq(progress.taskId, taskId)).get();
   if (!prog || !prog.startedAt) return { ok: false, error: "Task hasn't been started." };
 
   const hours = Math.max(1, Math.floor((Date.now() - prog.startedAt.getTime()) / HOUR_MS));
 
   try {
     const result = await generateUnblockSuggestion({ task, hoursInProgress: hours });
-    const inserted = db
+    const inserted = await db
       .insert(unblockSuggestions)
       .values({
         taskId,
@@ -691,7 +746,8 @@ export async function dismissUnblockSuggestion(formData: FormData): Promise<void
     taskId: formData.get("taskId"),
   });
   if (!parsed.success) return;
-  db.update(unblockSuggestions)
+  await db
+    .update(unblockSuggestions)
     .set({ dismissedAt: new Date() })
     .where(eq(unblockSuggestions.id, parsed.data.id))
     .run();
@@ -708,7 +764,7 @@ export async function getNextPhysicalAction(
   const parsed = nextActionSchema.safeParse({ taskId: formData.get("taskId") });
   if (!parsed.success) return { ok: false, error: "Invalid task id." };
 
-  const task = db.select().from(tasks).where(eq(tasks.id, parsed.data.taskId)).get();
+  const task = await db.select().from(tasks).where(eq(tasks.id, parsed.data.taskId)).get();
   if (!task) return { ok: false, error: "Task not found." };
 
   try {
@@ -735,7 +791,7 @@ export async function generateStatusLineForToday(): Promise<
   ActionResult<{ id: number; created: boolean }>
 > {
   const today = todayStatusDate();
-  const existing = db
+  const existing = await db
     .select({ id: statusLines.id })
     .from(statusLines)
     .where(eq(statusLines.statusDate, today))
@@ -744,7 +800,7 @@ export async function generateStatusLineForToday(): Promise<
 
   try {
     const result = await generateStatusLine();
-    const inserted = db
+    const inserted = await db
       .insert(statusLines)
       .values({
         statusDate: today,
@@ -770,10 +826,10 @@ export async function generateStatusLineForToday(): Promise<
 
 export async function regenerateStatusLineForToday(): Promise<ActionResult<{ id: number }>> {
   const today = todayStatusDate();
-  db.delete(statusLines).where(eq(statusLines.statusDate, today)).run();
+  await db.delete(statusLines).where(eq(statusLines.statusDate, today)).run();
   try {
     const result = await generateStatusLine();
-    const inserted = db
+    const inserted = await db
       .insert(statusLines)
       .values({
         statusDate: today,
@@ -803,7 +859,7 @@ export async function generateBriefingForToday(): Promise<
   ActionResult<{ briefingId: number; created: boolean }>
 > {
   const today = todayLocalDate();
-  const existing = db
+  const existing = await db
     .select({ id: briefings.id })
     .from(briefings)
     .where(eq(briefings.briefingDate, today))
@@ -814,7 +870,7 @@ export async function generateBriefingForToday(): Promise<
 
   try {
     const result = await generateBriefing();
-    const inserted = db
+    const inserted = await db
       .insert(briefings)
       .values({
         briefingDate: today,
@@ -842,10 +898,10 @@ export async function regenerateBriefingForToday(): Promise<
   ActionResult<{ briefingId: number }>
 > {
   const today = todayLocalDate();
-  db.delete(briefings).where(eq(briefings.briefingDate, today)).run();
+  await db.delete(briefings).where(eq(briefings.briefingDate, today)).run();
   try {
     const result = await generateBriefing();
-    const inserted = db
+    const inserted = await db
       .insert(briefings)
       .values({
         briefingDate: today,
@@ -917,14 +973,25 @@ function rowsWithIsoDates<T extends Record<string, unknown>>(
 export async function exportAllData(): Promise<
   ActionResult<{ filename: string; payload: ExportPayload }>
 > {
-  const taskRows = db.select().from(tasks).all();
-  const progressRows = db.select().from(progress).all();
-  const submissionRows = db.select().from(submissions).all();
-  const lessonRows = db.select().from(lessons).all();
-  const quizQuestionRows = db.select().from(quizQuestions).all();
-  const quizAttemptRows = db.select().from(quizAttempts).all();
-  const noteRows = db.select().from(notes).all();
-  const retroRows = db.select().from(retros).all();
+  const [
+    taskRows,
+    progressRows,
+    submissionRows,
+    lessonRows,
+    quizQuestionRows,
+    quizAttemptRows,
+    noteRows,
+    retroRows,
+  ] = await Promise.all([
+    db.select().from(tasks).all(),
+    db.select().from(progress).all(),
+    db.select().from(submissions).all(),
+    db.select().from(lessons).all(),
+    db.select().from(quizQuestions).all(),
+    db.select().from(quizAttempts).all(),
+    db.select().from(notes).all(),
+    db.select().from(retros).all(),
+  ]);
 
   const totalTasks = taskRows.length;
   const passedCount = progressRows.filter((r) => r.status === "passed").length;
@@ -1023,11 +1090,11 @@ export async function saveCoachingSettings(formData: FormData): Promise<void> {
   });
   if (!parsed.success) return;
 
-  await writeDotEnv({
-    COACH_DAILY_BRIEFING_ENABLED: parsed.data.dailyBriefingEnabled === "on" ? "true" : "false",
-    COACH_STUCK_DETECTOR_ENABLED: parsed.data.stuckDetectorEnabled === "on" ? "true" : "false",
-    COACH_STUCK_HOURS: String(parsed.data.stuckHoursThreshold),
-    COACH_NEXT_ACTION_MODEL: parsed.data.nextActionModel,
+  await updateSettingsRow({
+    dailyBriefingEnabled: parsed.data.dailyBriefingEnabled === "on",
+    stuckDetectorEnabled: parsed.data.stuckDetectorEnabled === "on",
+    stuckHoursThreshold: parsed.data.stuckHoursThreshold,
+    nextActionModel: parsed.data.nextActionModel,
   });
   revalidatePath("/settings");
   revalidatePath("/");
@@ -1044,13 +1111,12 @@ export async function saveSettings(formData: FormData): Promise<void> {
   });
   if (!parsed.success) return;
 
-  const patch: Record<string, string> = {
-    GITHUB_USERNAME: parsed.data.githubUsername,
-    LESSON_MODEL: parsed.data.lessonModel,
-    GRADING_MODEL: parsed.data.gradingModel,
-  };
-  if (parsed.data.apiKey) patch.ANTHROPIC_API_KEY = parsed.data.apiKey;
-
-  await writeDotEnv(patch);
+  await updateSettingsRow({
+    githubUsername: parsed.data.githubUsername,
+    lessonModel: parsed.data.lessonModel,
+    gradingModel: parsed.data.gradingModel,
+    // Only overwrite the API key if the user supplied a non-empty value.
+    anthropicApiKey: parsed.data.apiKey ? parsed.data.apiKey : undefined,
+  });
   revalidatePath("/settings");
 }

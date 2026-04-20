@@ -23,7 +23,7 @@ export async function generateNextAction(task: Task): Promise<NextActionResult> 
   const { apiKey, nextActionModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const lastSub = db
+  const lastSub = await db
     .select({ grade: submissions.grade, submittedAt: submissions.submittedAt })
     .from(submissions)
     .where(eq(submissions.taskId, task.id))
@@ -31,7 +31,7 @@ export async function generateNextAction(task: Task): Promise<NextActionResult> 
     .limit(1)
     .get();
 
-  const lastNote = db
+  const lastNote = await db
     .select({ body: notes.bodyMd, createdAt: notes.createdAt })
     .from(notes)
     .where(eq(notes.taskId, task.id))

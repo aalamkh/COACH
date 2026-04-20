@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const [settings, cost] = await Promise.all([
     readSettings(),
-    Promise.resolve(loadCostStats()),
+    loadCostStats(),
   ]);
   const {
     apiKey,

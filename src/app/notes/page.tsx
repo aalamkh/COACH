@@ -53,15 +53,13 @@ export default async function NotesPage({ searchParams }: PageProps) {
     .leftJoin(tasks, eq(tasks.id, notes.taskId))
     .orderBy(desc(notes.createdAt));
 
-  const rows =
-    filter.kind === "week"
-      ? baseQuery.where(gte(notes.createdAt, startOfWeek())).all()
-      : filter.kind === "task"
-        ? baseQuery.where(eq(notes.taskId, filter.taskId)).all()
-        : baseQuery.all();
+  const rows = await (filter.kind === "week"
+    ? baseQuery.where(gte(notes.createdAt, startOfWeek())).all()
+    : filter.kind === "task"
+      ? baseQuery.where(eq(notes.taskId, filter.taskId)).all()
+      : baseQuery.all());
 
-  // Task options for the per-task dropdown: any task that has at least one note.
-  const taskOptionsRaw = db
+  const taskOptionsRaw = await db
     .select({
       taskId: notes.taskId,
       week: tasks.week,
@@ -86,7 +84,7 @@ export default async function NotesPage({ searchParams }: PageProps) {
     filter.kind === "all" ? "all" : filter.kind === "week" ? "week" : `task-${filter.taskId}`;
 
   return (
-    <div className="grid gap-8 md:grid-cols-[1fr_340px]">
+    <div className="grid grid-cols-1 gap-8 md:grid-cols-[1fr_340px]">
       <section className="space-y-4">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>

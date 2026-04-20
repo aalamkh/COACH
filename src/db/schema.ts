@@ -110,6 +110,28 @@ export const quizAttempts = sqliteTable("quiz_attempts", {
   correct: integer("correct", { mode: "boolean" }).notNull(),
 });
 
+// ───────── settings (single row) ─────────
+
+/**
+ * Runtime-editable configuration. Exactly one row, id = 1. Env vars always
+ * win at read time (so you can override anything per-deploy); the row holds
+ * the persisted preferences edited on /settings.
+ */
+export const settings = sqliteTable("settings", {
+  id: integer("id").primaryKey(),
+  anthropicApiKey: text("anthropic_api_key"),
+  githubUsername: text("github_username"),
+  lessonModel: text("lesson_model"),
+  gradingModel: text("grading_model"),
+  dailyBriefingEnabled: integer("daily_briefing_enabled", { mode: "boolean" }),
+  stuckDetectorEnabled: integer("stuck_detector_enabled", { mode: "boolean" }),
+  stuckHoursThreshold: integer("stuck_hours_threshold"),
+  nextActionModel: text("next_action_model"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ───────── status_lines ("where you are" — date-unique) ─────────
 
 export const paceLabels = [
@@ -234,3 +256,5 @@ export type UnblockSuggestion = typeof unblockSuggestions.$inferSelect;
 export type NewUnblockSuggestion = typeof unblockSuggestions.$inferInsert;
 export type StatusLine = typeof statusLines.$inferSelect;
 export type NewStatusLine = typeof statusLines.$inferInsert;
+export type SettingsRow = typeof settings.$inferSelect;
+export type NewSettingsRow = typeof settings.$inferInsert;

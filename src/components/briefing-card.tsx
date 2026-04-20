@@ -14,7 +14,7 @@ export async function BriefingCard() {
   const settings = await readSettings();
   if (!settings.dailyBriefingEnabled) return null;
 
-  const briefing = loadTodayBriefing() as Briefing | null;
+  const briefing = (await loadTodayBriefing()) as Briefing | null;
   if (briefing) return <Filled briefing={briefing} />;
 
   if (!settings.apiKey) return <NoKey />;
@@ -47,7 +47,7 @@ function NoKey() {
 async function Filled({ briefing }: { briefing: Briefing }) {
   let priorityTaskTitle: string | null = null;
   if (briefing.priorityTaskId != null) {
-    const t = db
+    const t = await db
       .select({ title: tasks.title, week: tasks.week, day: tasks.day })
       .from(tasks)
       .where(eq(tasks.id, briefing.priorityTaskId))

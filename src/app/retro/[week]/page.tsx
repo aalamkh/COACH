@@ -19,11 +19,11 @@ export default async function RetroPage({ params }: PageProps) {
   const week = Number(weekParam);
   if (!Number.isInteger(week) || week < 1 || week > 14) notFound();
 
-  const retro = (db
+  const retro = ((await db
     .select()
     .from(retros)
     .where(eq(retros.week, week))
-    .get() ?? null) as Retro | null;
+    .get()) ?? null) as Retro | null;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -49,13 +49,10 @@ export default async function RetroPage({ params }: PageProps) {
 }
 
 async function FormSection({ week }: { week: number }) {
-  const passed = passedTitlesForWeek(week);
-  const draftShipped = passed.length === 0
-    ? ""
-    : passed.map((p) => `- W${week} D${p.day}: ${p.title}`).join("\n");
-  return (
-    <RetroForm week={week} defaults={{ shipped: draftShipped }} />
-  );
+  const passed = await passedTitlesForWeek(week);
+  const draftShipped =
+    passed.length === 0 ? "" : passed.map((p) => `- W${week} D${p.day}: ${p.title}`).join("\n");
+  return <RetroForm week={week} defaults={{ shipped: draftShipped }} />;
 }
 
 function RetroResults({ retro }: { retro: Retro }) {

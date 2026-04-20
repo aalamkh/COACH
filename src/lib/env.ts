@@ -1,9 +1,8 @@
 import "server-only";
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
-
-const ENV_FILE = resolve(process.cwd(), ".env.local");
+import { db } from "@/db/client";
+import { settings, type SettingsRow } from "@/db/schema";
 
 export const MODEL_IDS = {
   opus: "claude-opus-4-7",
@@ -29,87 +28,68 @@ export const STUCK_HOURS_MIN = 6;
 export const STUCK_HOURS_MAX = 72;
 export const STUCK_HOURS_DEFAULT = 24;
 
-async function readDotEnv(): Promise<Record<string, string>> {
-  try {
-    const raw = await readFile(ENV_FILE, "utf8");
-    const out: Record<string, string> = {};
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let value = trimmed.slice(eq + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1).replace(/\\"/g, '"');
-      }
-      out[key] = value;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function serialize(values: Record<string, string>) {
-  const body = Object.entries(values)
-    .filter(([, v]) => v !== "")
-    .map(([k, v]) => {
-      const needsQuote = /[\s#"']/.test(v);
-      const escaped = needsQuote ? `"${v.replace(/"/g, '\\"')}"` : v;
-      return `${k}=${escaped}`;
-    })
-    .join("\n");
-  return body + (body.length > 0 ? "\n" : "");
-}
-
-function pickBool(raw: string | undefined, fallback: boolean): boolean {
-  if (raw === undefined) return fallback;
-  const v = raw.trim().toLowerCase();
+function parseBool(raw: string | undefined | null, fallback: boolean): boolean {
+  if (raw === undefined || raw === null) return fallback;
+  const v = raw.toString().trim().toLowerCase();
   if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
   if (v === "false" || v === "0" || v === "no" || v === "off") return false;
   return fallback;
 }
 
-function pickModel(raw: string | undefined, fallback: ModelChoice): ModelChoice {
+function parseModel(raw: string | undefined | null, fallback: ModelChoice): ModelChoice {
   const parsed = modelSchema.safeParse(raw);
   return parsed.success ? parsed.data : fallback;
 }
 
-function pickHours(raw: string | undefined): number {
-  const n = Number(raw);
+function parseHours(raw: string | number | undefined | null): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(n)) return STUCK_HOURS_DEFAULT;
   return Math.min(STUCK_HOURS_MAX, Math.max(STUCK_HOURS_MIN, Math.round(n)));
 }
 
+async function loadSettingsRow(): Promise<SettingsRow | null> {
+  try {
+    return (await db.select().from(settings).where(eq(settings.id, 1)).get()) ?? null;
+  } catch {
+    // Table may not exist yet (first boot before db:push) — treat as empty.
+    return null;
+  }
+}
+
 /**
- * Read settings fresh every call so /settings changes take effect without a
- * server restart.
+ * Read settings. Precedence: env var → DB row → default. Env-set values are
+ * useful for Netlify / local-override; the DB row holds the user's edits via
+ * /settings.
  */
 export async function readSettings(): Promise<Settings> {
-  const env = await readDotEnv();
-  const apiKey = env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? "";
-  const githubUsername =
-    env.GITHUB_USERNAME ?? process.env.GITHUB_USERNAME ?? "aalamkh";
-  const lessonModel = pickModel(env.LESSON_MODEL ?? process.env.LESSON_MODEL, "opus");
-  const gradingModel = pickModel(env.GRADING_MODEL ?? process.env.GRADING_MODEL, "opus");
+  const row = await loadSettingsRow();
 
-  const dailyBriefingEnabled = pickBool(
-    env.COACH_DAILY_BRIEFING_ENABLED ?? process.env.COACH_DAILY_BRIEFING_ENABLED,
-    true,
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? row?.anthropicApiKey ?? "";
+  const githubUsername =
+    process.env.GITHUB_USERNAME ?? row?.githubUsername ?? "aalamkh";
+
+  const lessonModel = parseModel(
+    process.env.LESSON_MODEL ?? row?.lessonModel ?? null,
+    "opus",
   );
-  const stuckDetectorEnabled = pickBool(
-    env.COACH_STUCK_DETECTOR_ENABLED ?? process.env.COACH_STUCK_DETECTOR_ENABLED,
-    true,
+  const gradingModel = parseModel(
+    process.env.GRADING_MODEL ?? row?.gradingModel ?? null,
+    "opus",
   );
-  const stuckHoursThreshold = pickHours(
-    env.COACH_STUCK_HOURS ?? process.env.COACH_STUCK_HOURS,
+
+  const dailyBriefingEnabled = parseBool(
+    process.env.COACH_DAILY_BRIEFING_ENABLED,
+    row?.dailyBriefingEnabled ?? true,
   );
-  const nextActionModel = pickModel(
-    env.COACH_NEXT_ACTION_MODEL ?? process.env.COACH_NEXT_ACTION_MODEL,
+  const stuckDetectorEnabled = parseBool(
+    process.env.COACH_STUCK_DETECTOR_ENABLED,
+    row?.stuckDetectorEnabled ?? true,
+  );
+  const stuckHoursThreshold = parseHours(
+    process.env.COACH_STUCK_HOURS ?? row?.stuckHoursThreshold ?? null,
+  );
+  const nextActionModel = parseModel(
+    process.env.COACH_NEXT_ACTION_MODEL ?? row?.nextActionModel ?? null,
     "haiku",
   );
 
@@ -125,14 +105,45 @@ export async function readSettings(): Promise<Settings> {
   };
 }
 
-export async function writeDotEnv(patch: Record<string, string>) {
-  const current = await readDotEnv();
-  const next = { ...current, ...patch };
-  await writeFile(ENV_FILE, serialize(next), "utf8");
-}
-
 export function maskedKey(apiKey: string): string {
   if (!apiKey) return "";
   if (apiKey.length <= 12) return "***";
   return `${apiKey.slice(0, 8)}…${apiKey.slice(-4)}`;
+}
+
+/** Upsert the single settings row. Null values leave the existing value alone. */
+export async function updateSettingsRow(patch: {
+  anthropicApiKey?: string | null;
+  githubUsername?: string | null;
+  lessonModel?: ModelChoice | null;
+  gradingModel?: ModelChoice | null;
+  dailyBriefingEnabled?: boolean | null;
+  stuckDetectorEnabled?: boolean | null;
+  stuckHoursThreshold?: number | null;
+  nextActionModel?: ModelChoice | null;
+}): Promise<void> {
+  const existing = await loadSettingsRow();
+  if (!existing) {
+    await db
+      .insert(settings)
+      .values({
+        id: 1,
+        anthropicApiKey: patch.anthropicApiKey ?? null,
+        githubUsername: patch.githubUsername ?? null,
+        lessonModel: patch.lessonModel ?? null,
+        gradingModel: patch.gradingModel ?? null,
+        dailyBriefingEnabled: patch.dailyBriefingEnabled ?? null,
+        stuckDetectorEnabled: patch.stuckDetectorEnabled ?? null,
+        stuckHoursThreshold: patch.stuckHoursThreshold ?? null,
+        nextActionModel: patch.nextActionModel ?? null,
+        updatedAt: new Date(),
+      })
+      .run();
+    return;
+  }
+  const next: Record<string, unknown> = { updatedAt: new Date() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v !== undefined && v !== null) next[k] = v;
+  }
+  await db.update(settings).set(next).where(eq(settings.id, 1)).run();
 }

@@ -15,7 +15,7 @@ function firstParagraph(md: string | null): string {
 }
 
 export default async function RetrosIndex() {
-  const rows = db
+  const rows = await db
     .select({
       week: retros.week,
       generatedAt: retros.generatedAt,

@@ -78,7 +78,7 @@ export default async function TaskPage({ params, searchParams }: PageProps) {
   const taskId = Number(id);
   if (!Number.isInteger(taskId) || taskId <= 0) notFound();
 
-  const row = db
+  const row = (await db
     .select({
       id: tasks.id,
       week: tasks.week,
@@ -95,10 +95,10 @@ export default async function TaskPage({ params, searchParams }: PageProps) {
     .from(tasks)
     .innerJoin(progress, eq(progress.taskId, tasks.id))
     .where(eq(tasks.id, taskId))
-    .get() as TaskRow | undefined;
+    .get()) as TaskRow | undefined;
   if (!row) notFound();
 
-  const subs = db
+  const subs = (await db
     .select({
       id: submissions.id,
       submittedAt: submissions.submittedAt,
@@ -111,15 +111,15 @@ export default async function TaskPage({ params, searchParams }: PageProps) {
     .from(submissions)
     .where(eq(submissions.taskId, taskId))
     .orderBy(desc(submissions.submittedAt))
-    .all() as SubmissionRow[];
+    .all()) as SubmissionRow[];
 
-  const lesson = db
+  const lesson = (await db
     .select()
     .from(lessons)
     .where(eq(lessons.taskId, taskId))
-    .get() as Lesson | undefined;
+    .get()) as Lesson | undefined;
 
-  const quiz = loadLessonQuiz(lesson?.id ?? null);
+  const quiz = await loadLessonQuiz(lesson?.id ?? null);
 
   const hasPassed = subs.some((s) => s.grade === "pass" || s.grade === "manual");
   const settings = await readSettings();
@@ -130,7 +130,7 @@ export default async function TaskPage({ params, searchParams }: PageProps) {
   const tab: Tab =
     explicit && explicit.success ? explicit.data : lesson && !hasPassed ? "lesson" : "task";
 
-  const weekTasks = db
+  const weekTasks = (await db
     .select({
       id: tasks.id,
       day: tasks.day,
@@ -141,14 +141,14 @@ export default async function TaskPage({ params, searchParams }: PageProps) {
     .innerJoin(progress, eq(progress.taskId, tasks.id))
     .where(eq(tasks.week, row.week))
     .orderBy(asc(tasks.day))
-    .all() as Array<{ id: number; day: number; title: string; status: Status }>;
+    .all()) as Array<{ id: number; day: number; title: string; status: Status }>;
 
   const idx = weekTasks.findIndex((t) => t.id === row.id);
   const prev = idx > 0 ? weekTasks[idx - 1]! : null;
   const next = idx >= 0 && idx < weekTasks.length - 1 ? weekTasks[idx + 1]! : null;
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_240px]">
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_240px]">
       <div className="min-w-0 space-y-6">
         <Link
           href={row.week === 0 ? "/ai-track" : "/plan"}
@@ -563,7 +563,7 @@ function splitConceptSections(md: string): string[] {
 }
 
 function initialQuizAttemptsFor(
-  quiz: ReturnType<typeof loadLessonQuiz>,
+  quiz: Awaited<ReturnType<typeof loadLessonQuiz>>,
 ): Record<number, InitialAttempt> {
   const out: Record<number, InitialAttempt> = {};
   if (!quiz) return out;

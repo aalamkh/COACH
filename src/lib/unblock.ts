@@ -49,7 +49,7 @@ export async function generateUnblockSuggestion(params: { task: Task; hoursInPro
   const { apiKey, gradingModel } = await readSettings();
   if (!apiKey) throw new MissingApiKeyError();
 
-  const taskNotes = db
+  const taskNotes = await db
     .select({ body: notes.bodyMd, createdAt: notes.createdAt })
     .from(notes)
     .where(eq(notes.taskId, params.task.id))
@@ -57,7 +57,7 @@ export async function generateUnblockSuggestion(params: { task: Task; hoursInPro
     .all();
   const noteStrings = taskNotes.map((n) => `${n.createdAt.toISOString()}: ${clamp(n.body, 600)}`);
 
-  const lastSub = db
+  const lastSub = await db
     .select({ content: submissions.content })
     .from(submissions)
     .where(eq(submissions.taskId, params.task.id))
