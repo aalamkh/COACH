@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .markdown h1 {
+    @apply mt-0 mb-3 text-xl font-semibold tracking-tight;
+  }
+  .markdown h2 {
+    @apply mt-4 mb-2 text-lg font-semibold tracking-tight;
+  }
+  .markdown h3 {
+    @apply mt-3 mb-1.5 text-base font-semibold;
+  }
+  .markdown p {
+    @apply my-2;
+  }
+  .markdown ul {
+    @apply my-2 list-disc space-y-1 pl-5;
+  }
+  .markdown ol {
+    @apply my-2 list-decimal space-y-1 pl-5;
+  }
+  .markdown li > p {
+    @apply my-0;
+  }
+  .markdown a {
+    @apply text-primary underline-offset-2 hover:underline;
+  }
+  .markdown strong {
+    @apply font-semibold;
+  }
+  .markdown code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .markdown pre {
+    @apply my-3 overflow-x-auto rounded-md border border-border p-3 text-xs;
+  }
+  .markdown pre code {
+    @apply bg-transparent p-0 text-xs;
+  }
+  /* shiki dual themes */
+  .markdown .shiki,
+  .markdown .shiki span {
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
+    font-style: var(--shiki-light-font-style);
+    font-weight: var(--shiki-light-font-weight);
+    text-decoration: var(--shiki-light-text-decoration);
+  }
+  html.dark .markdown .shiki,
+  html.dark .markdown .shiki span {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+    font-style: var(--shiki-dark-font-style);
+    font-weight: var(--shiki-dark-font-weight);
+    text-decoration: var(--shiki-dark-text-decoration);
+  }
+  .markdown blockquote {
+    @apply my-3 border-l-2 border-border pl-3 text-muted-foreground;
+  }
+  .markdown table {
+    @apply my-3 w-full border-collapse text-sm;
+  }
+  .markdown th,
+  .markdown td {
+    @apply border border-border px-2 py-1 text-left;
+  }
+  .markdown hr {
+    @apply my-4 border-border;
+  }
+  .markdown input[type="checkbox"] {
+    @apply mr-1 align-middle;
+  }
+  .markdown ul.contains-task-list {
+    @apply list-none pl-0;
+  }
+  .markdown li.task-list-item {
+    @apply pl-0;
+  }
+}
