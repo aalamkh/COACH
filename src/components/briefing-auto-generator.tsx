@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { generateBriefingForToday } from "@/app/actions";
+import { isBillingError } from "@/lib/billing-error";
 
 export function BriefingAutoGenerator() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export function BriefingAutoGenerator() {
   }
 
   if (error) {
+    if (isBillingError(error)) return null;
     return (
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-100">
         Briefing didn't generate: {error}
